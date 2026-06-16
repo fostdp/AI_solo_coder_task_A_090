@@ -1,0 +1,20 @@
+FROM python:3.11-slim
+
+RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuser
+
+WORKDIR /app
+
+COPY backend/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY scripts/sensor_simulator.py .
+COPY config/ /app/config/
+
+RUN chown -R appuser:appuser /app
+
+USER appuser
+
+ENV PYTHONUNBUFFERED=1
+
+ENTRYPOINT ["python", "sensor_simulator.py"]
+CMD ["--auto"]

@@ -1,0 +1,42 @@
+{
+  "buckets": [
+    {
+      "name": "waterwheel_data",
+      "retention_days": 30,
+      "shard_group_duration_hours": 24
+    },
+    {
+      "name": "waterwheel_downsampled_1h",
+      "retention_days": 365,
+      "shard_group_duration_hours": 168
+    },
+    {
+      "name": "waterwheel_downsampled_1d",
+      "retention_days": 3650,
+      "shard_group_duration_hours": 720
+    }
+  ],
+  "tasks": [
+    {
+      "name": "downsample-1h",
+      "description": "1小时降采样：原始数据聚合为每小时均值/最大/最小",
+      "flux": "from(bucket: \"waterwheel_data\")\n  |> range(start: -2h)\n  |> filter(fn: (r) => r._measurement == \"waterwheel_sensor\")\n  |> aggregateWindow(every: 1h, fn: mean, createEmpty: false)\n  |> to(bucket: \"waterwheel_downsampled_1h\", org: \"agri-history\")",
+      "every": "1h",
+      "offset": "5m"
+    },
+    {
+      "name": "downsample-1d",
+      "description": "1天降采样：1小时聚合进一步聚合为每日统计",
+      "flux": "from(bucket: \"waterwheel_downsampled_1h\")\n  |> range(start: -2d)\n  |> filter(fn: (r) => r._measurement == \"waterwheel_sensor\")\n  |> aggregateWindow(every: 1d, fn: mean, createEmpty: false)\n  |> to(bucket: \"waterwheel_downsampled_1d\", org: \"agri-history\")",
+      "every": "1d",
+      "offset": "30m"
+    },
+    {
+      "name": "alert-stats-1h",
+      "description": "告警统计：每小时告警计数",
+      "flux": "from(bucket: \"waterwheel_data\")\n  |> range(start: -2h)\n  |> filter(fn: (r) => r._measurement == \"waterwheel_alert\")\n  |> aggregateWindow(every: 1h, fn: count, createEmpty: false)\n  |> to(bucket: \"waterwheel_downsampled_1h\", org: \"agri-history\")",
+      "every": "1h",
+      "offset": "10m"
+    }
+  ]
+}

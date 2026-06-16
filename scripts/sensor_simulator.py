@@ -325,16 +325,55 @@ def interactive_menu():
             print(f"  已生成数据: {len(sim.data_history)} 条")
 
 
+def parse_args():
+    import argparse
+    parser = argparse.ArgumentParser(description="汉代龙骨水车传感器模拟器")
+    parser.add_argument("--auto", action="store_true", help="自动模拟模式")
+    parser.add_argument("--speed", type=float, default=15.0, help="额定转速 rpm (默认: 15)")
+    parser.add_argument("--level", type=float, default=2.0, help="额定水位差 m (默认: 2.0)")
+    parser.add_argument("--torque", type=float, default=80.0, help="额定扭矩 N·m (默认: 80)")
+    parser.add_argument("--lift", type=float, default=180.0, help="额定提水量 L/min (默认: 180)")
+    parser.add_argument("--wheel-id", type=str, default="han_dynasty_wheel_001", help="水车ID")
+    parser.add_argument("--location", type=str, default="shaanxi_han_ruins", help="水车位置")
+    parser.add_argument("--interval", type=int, default=60, help="上报间隔秒 (默认: 60)")
+    parser.add_argument("--duration", type=int, default=0, help="模拟时长分钟 (0=无限)")
+    parser.add_argument("--speed-factor", type=float, default=1.0, help="转速倍率 (默认: 1.0)")
+    parser.add_argument("--torque-factor", type=float, default=1.0, help="扭矩倍率 (默认: 1.0)")
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "--auto":
-        config = WaterWheelConfig()
-        sim = WaterWheelSimulator(config)
-        print("启动自动模拟模式 (Ctrl+C 停止)...")
+    args = parse_args()
+
+    REPORT_INTERVAL = args.interval
+
+    config = WaterWheelConfig(
+        wheel_id=args.wheel_id,
+        location=args.location,
+        nominal_speed=args.speed,
+        nominal_torque=args.torque,
+        nominal_water_lift=args.lift,
+        nominal_level_diff=args.level,
+    )
+
+    sim = WaterWheelSimulator(config)
+    sim.set_operating_condition(args.speed_factor, args.torque_factor)
+
+    if args.auto or args.duration > 0:
+        print(f"启动自动模拟模式 (转速={args.speed}rpm, 水位差={args.level}m, 间隔={args.interval}s)")
+        total_minutes = args.duration
+        count = 0
+        max_count = total_minutes * 60 // args.interval if total_minutes > 0 else -1
         try:
-            while True:
+            while max_count < 0 or count < max_count:
                 data = sim.generate_reading()
                 sim.post_to_backend(data)
-                time.sleep(REPORT_INTERVAL)
+                count += 1
+                if max_count < 0 or count < max_count:
+                    for i in range(REPORT_INTERVAL, 0, -1):
+                        print(f"\r  下次上报倒计时: {i}秒 ", end="", flush=True)
+                        time.sleep(1)
+                    print()
         except KeyboardInterrupt:
             print("\n已停止")
     else:

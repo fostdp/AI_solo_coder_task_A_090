@@ -1,0 +1,13 @@
+worker_class: uvicorn.workers.UvicornWorker
+bind: "0.0.0.0:8000"
+workers: 2
+threads: 1
+timeout: 120
+keepalive: 5
+graceful_timeout: 30
+max_requests: 1000
+max_requests_jitter: 50
+accesslog: "-"
+errorlog: "-"
+loglevel: "info"
+preload_app: true

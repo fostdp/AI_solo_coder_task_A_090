@@ -1,0 +1,195 @@
+version: "3.9"
+
+x-backend-common: &backend-common
+  build:
+    context: .
+    dockerfile: docker/Dockerfile.backend
+  restart: unless-stopped
+  depends_on:
+    influxdb:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  environment: &backend-env
+    INFLUXDB_URL: http://influxdb:8086
+    INFLUXDB_TOKEN: ${INFLUXDB_TOKEN:-my-super-secret-auth-token}
+    INFLUXDB_ORG: ${INFLUXDB_ORG:-agri-history}
+    INFLUXDB_BUCKET: ${INFLUXDB_BUCKET:-waterwheel_data}
+    REDIS_URL: redis://redis:6379/0
+  networks:
+    - waterwheel-net
+
+services:
+  influxdb:
+    image: influxdb:2.7-alpine
+    container_name: waterwheel-influxdb
+    ports:
+      - "8086:8086"
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: ${INFLUXDB_USERNAME:-admin}
+      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUXDB_PASSWORD:-adminpassword123}
+      DOCKER_INFLUXDB_INIT_ORG: ${INFLUXDB_ORG:-agri-history}
+      DOCKER_INFLUXDB_INIT_BUCKET: ${INFLUXDB_BUCKET:-waterwheel_data}
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUXDB_TOKEN:-my-super-secret-auth-token}
+      DOCKER_INFLUXDB_INIT_RETENTION: 30d
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+    healthcheck:
+      test: ["CMD", "influx", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - waterwheel-net
+
+  influxdb-init:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    container_name: waterwheel-influxdb-init
+    depends_on:
+      influxdb:
+        condition: service_healthy
+    environment:
+      <<: *backend-env
+      INFLUXDB_CONFIG_PATH: /app/config/influxdb/config.json
+    entrypoint: ["python", "/app/docker/influxdb/init.py"]
+    volumes:
+      - .:/app/project:ro
+    networks:
+      - waterwheel-net
+    restart: "no"
+
+  redis:
+    image: redis:7-alpine
+    container_name: waterwheel-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --maxmemory 128mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - waterwheel-net
+
+  dtu_receiver:
+    <<: *backend-common
+    container_name: waterwheel-dtu
+    ports:
+      - "8001:8000"
+    command:
+      - gunicorn
+      - -c
+      - /app/docker/gunicorn.conf.py
+      - --bind
+      - "0.0.0.0:8000"
+      - --workers
+      - "2"
+      - dtu_receiver.main:app
+    volumes:
+      - ./docker/gunicorn.conf.py:/app/docker/gunicorn.conf.py:ro
+
+  mechanics_simulator:
+    <<: *backend-common
+    container_name: waterwheel-mechanics
+    ports:
+      - "8002:8000"
+    command:
+      - gunicorn
+      - -c
+      - /app/docker/gunicorn.conf.py
+      - --bind
+      - "0.0.0.0:8000"
+      - --workers
+      - "2"
+      - mechanics_simulator.main:app
+    volumes:
+      - ./docker/gunicorn.conf.py:/app/docker/gunicorn.conf.py:ro
+
+  irrigation_analyzer:
+    <<: *backend-common
+    container_name: waterwheel-irrigation
+    ports:
+      - "8003:8000"
+    command:
+      - gunicorn
+      - -c
+      - /app/docker/gunicorn.conf.py
+      - --bind
+      - "0.0.0.0:8000"
+      - --workers
+      - "2"
+      - irrigation_analyzer.main:app
+    volumes:
+      - ./docker/gunicorn.conf.py:/app/docker/gunicorn.conf.py:ro
+
+  alarm_ws:
+    <<: *backend-common
+    container_name: waterwheel-alarm
+    ports:
+      - "8004:8000"
+    command:
+      - gunicorn
+      - -c
+      - /app/docker/gunicorn.conf.py
+      - --bind
+      - "0.0.0.0:8000"
+      - --workers
+      - "1"
+      - --worker-class
+      - uvicorn.workers.UvicornH11Worker
+      - alarm_ws.main:app
+    volumes:
+      - ./docker/gunicorn.conf.py:/app/docker/gunicorn.conf.py:ro
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    container_name: waterwheel-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - dtu_receiver
+      - mechanics_simulator
+      - irrigation_analyzer
+      - alarm_ws
+    networks:
+      - waterwheel-net
+    restart: unless-stopped
+
+  simulator:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.simulator
+    container_name: waterwheel-simulator
+    depends_on:
+      - dtu_receiver
+    environment:
+      BACKEND_URL: http://dtu_receiver:8000
+      WS_URL: ws://alarm_ws:8000
+    command:
+      - "--auto"
+      - "--speed"
+      - "15"
+      - "--level"
+      - "2.0"
+    networks:
+      - waterwheel-net
+    restart: unless-stopped
+
+volumes:
+  influxdb-data:
+    driver: local
+  redis-data:
+    driver: local
+
+networks:
+  waterwheel-net:
+    driver: bridge
